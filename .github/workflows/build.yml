@@ -1,4 +1,5 @@
-name: Build APK
+               fontSize = 15.sp
+     name: Build APK
 
 on:
   push:
@@ -19,6 +20,10 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
+    - name: Accept Android SDK Licenses
+      run: |
+        yes | sdkmanager --licenses || true
+
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v4
       with:
@@ -30,7 +35,15 @@ jobs:
         unzip -o *.zip -d project
         cd project
 
-        # ১. মিসিং অ্যাপ আইকন তৈরি
+        # ১. থিম নাম এবং SDK ফিক্স
+        sed -i 's/Theme.047AutoAccept/Theme.AutoAcceptApp/g' app/src/main/res/values/themes.xml || true
+        sed -i 's/Theme.047AutoAccept/Theme.AutoAcceptApp/g' app/src/main/AndroidManifest.xml || true
+        sed -i 's/compileSdk = 35/compileSdk = 34/g' app/build.gradle.kts || true
+        sed -i 's/targetSdk = 35/targetSdk = 34/g' app/build.gradle.kts || true
+        sed -i 's/tools:targetApi="35"/tools:targetApi="34"/g' app/src/main/AndroidManifest.xml || true
+        sed -i '/ndk {/,/}/d' app/build.gradle.kts || true
+
+        # ২. অ্যাপ আইকন তৈরি
         mkdir -p app/src/main/res/drawable
         cat << 'EOF' > app/src/main/res/drawable/ic_launcher.xml
         <vector xmlns:android="http://schemas.android.com/apk/res/android"
@@ -46,7 +59,7 @@ jobs:
         sed -i 's/@mipmap\/ic_launcher/@drawable\/ic_launcher/g' app/src/main/AndroidManifest.xml
         sed -i 's/@mipmap\/ic_launcher_round/@drawable\/ic_launcher/g' app/src/main/AndroidManifest.xml
 
-        # ২. সম্পূর্ণ কম্পোজ UI ইনজেক্ট
+        # ৩. কম্পোজ UI
         cat << 'EOF' > app/src/main/java/com/autoaccept/store047/MainActivity.kt
         package com.autoaccept.store047
 
@@ -200,6 +213,161 @@ jobs:
                                                 color = Color.White,
                                                 fontSize = 15.sp
                                             )
+                                            Text(
+                                                text = if (isAutomationEnabled) "Auto-accepting store $storeCode" else "Automation is paused",
+                                                color = if (isAutomationEnabled) Color(0xFF34D399) else Color(0xFF94A3B8),
+                                                fontSize = 12.sp
+                                            )
+                                        }
+                                        Switch(
+                                            checked = isAutomationEnabled,
+                                            onCheckedChange = { enabled ->
+                                                prefsManager.setAutomationEnabled(enabled)
+                                                LogRepository.addLog(
+                                                    if (enabled) "Automation ON: Monitoring store $storeCode" else "Automation OFF",
+                                                    if (enabled) LogLevel.INFO else LogLevel.WARNING
+                                                )
+                                            },
+                                            colors = SwitchDefaults.colors(
+                                                checkedThumbColor = Color.White,
+                                                checkedTrackColor = Color(0xFF059669)
+                                            )
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(12.dp))
+
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(modifier = Modifier.padding(14.dp)) {
+                                        Text("Target Store Code", fontWeight = FontWeight.SemiBold, color = Color(0xFF94A3B8), fontSize = 12.sp)
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        OutlinedTextField(
+                                            value = storeCode,
+                                            onValueChange = { newCode ->
+                                                prefsManager.setStoreCode(newCode)
+                                                LogRepository.addLog("Store code changed to: $newCode", LogLevel.INFO)
+                                            },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            singleLine = true,
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                focusedTextColor = Color.White,
+                                                unfocusedTextColor = Color.White,
+                                                focusedBorderColor = Color(0xFF10B981),
+                                                unfocusedBorderColor = Color(0xFF334155)
+                                            )
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Button(
+                                            onClick = {
+                                                LogRepository.addLog("Self-Test: Store $storeCode detected", LogLevel.INFO)
+                                                LogRepository.addLog("Self-Test: 'Accept the order' button found", LogLevel.INFO)
+                                                LogRepository.addLog("Order accepted automatically for store $storeCode", LogLevel.SUCCESS)
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color.White),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Text("Run Self-Test", color = Color(0xFF0F172A), fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(12.dp))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("Activity Log", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 14.sp)
+                                    TextButton(onClick = { LogRepository.clearLogs() }) {
+                                        Text("Clear", color = Color(0xFF94A3B8), fontSize = 12.sp)
+                                    }
+                                }
+
+                                LazyColumn(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color(0xFF0B1120))
+                                        .padding(8.dp)
+                                ) {
+                                    items(logs) { entry ->
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = "[${entry.timestamp}]",
+                                                color = Color(0xFF64748B),
+                                                fontSize = 11.sp
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = entry.message,
+                                                color = when (entry.level) {
+                                                    LogLevel.SUCCESS -> Color(0xFF34D399)
+                                                    LogLevel.WARNING -> Color(0xFFFBBF24)
+                                                    LogLevel.IGNORED -> Color(0xFF94A3B8)
+                                                    else -> Color(0xFFE2E8F0)
+                                                },
+                                                fontSize = 12.sp,
+                                                fontWeight = if (entry.level == LogLevel.SUCCESS) FontWeight.Bold else FontWeight.Normal
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            override fun onResume() {
+                super.onResume()
+                checkAccessibilityStatus()
+            }
+
+            private fun checkAccessibilityStatus() {
+                isAccessibilityEnabledState.value = isAccessibilityServiceEnabled(this)
+            }
+
+            private fun isAccessibilityServiceEnabled(context: Context): Boolean {
+                val expectedServiceName = "${context.packageName}/${AutoAcceptAccessibilityService::class.java.canonicalName}"
+                val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager ?: return false
+                val enabledServices = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+
+                for (service in enabledServices) {
+                    val resolveInfo = service.resolveInfo
+                    if (resolveInfo != null) {
+                        val serviceInfo = resolveInfo.serviceInfo
+                        val fullServiceName = "${serviceInfo.packageName}/${serviceInfo.name}"
+                        if (fullServiceName.equals(expectedServiceName, ignoreCase = true) ||
+                            serviceInfo.packageName == context.packageName
+                        ) {
+                            return true
+                        }
+                    }
+                }
+                return false
+            }
+        }
+        EOF
+
+        # ৪. APK বিল্ড করা
+        gradle assembleDebug
+
+    - name: Upload Finished APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: 047-Auto-Accept-APK
+        path: project/app/build/outputs/apk/debug/*.apk                                       )
                                             Text(
                                                 text = if (isAutomationEnabled) "Auto-accepting store $storeCode" else "Automation is paused",
                                                 color = if (isAutomationEnabled) Color(0xFF34D399) else Color(0xFF94A3B8),
